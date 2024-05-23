@@ -19,7 +19,7 @@
 	Rongo uses MongoDB's Data API, which is disabled by
 	default so you must enable it in your Atlas settings
 	
-	Version: 2.0.0
+	Version: 2.1.0
 	License: MIT License
 	Documentation: https://devforum.roblox.com/t/rongo/1755615	
 	
@@ -41,7 +41,6 @@ local ENDPOINTS = {
 		["InsertMany"] = "/action/insertMany",
 		["UpdateOne"] = "/action/updateOne",
 		["UpdateMany"] = "/action/updateMany",
-		["ReplaceOne"] = "/action/replaceOne",
 		["DeleteOne"] = "/action/deleteOne",
 		["DeleteMany"] = "/action/deleteMany",
 		["Aggregate"] = "/action/aggregate",
@@ -92,9 +91,13 @@ local function CreateAuthHeaders(Auth: {[string]: string})
 		return {
 			["Authorization"] = "Bearer "..string.gsub(Auth.Token,"Bearer ","")
 		}
+	elseif Auth.Type == "uri" then
+		return {
+			["Authorization"] = Auth.Uri
+		}
 	end
 	
-	return
+	return {}
 end
 
 local function RongoRequest(Url: string,Auth: any, Data: any)
@@ -115,11 +118,13 @@ local function RongoRequest(Url: string,Auth: any, Data: any)
 		})
 	end)
 	
-	if not Success or not Response or not Response.Body then RongoError(`Failed to send request to {Url}`); RongoWarn("Response data:",Response) return end
+	if not Success or not Response or not Response.Body then RongoWarn("Response data:",Response); RongoError(`Failed to send request to {Url}`);  return end
 
 	local Body = HttpService:JSONDecode(Response.Body)
-	if Body and Body["error"] then RongoWarn(`Request returned an error with the following details:\nError message: {Body["error"]}\nError code: {Body["error_code"]}\nLink: {Body["link"]}\n`) end
+	if Body and Body["error"] and Body["error_code"] then RongoWarn(`Request returned an error with the following details:\nError message: {Body["error"]}\nError code: {Body["error_code"]}\nLink: {Body["link"]}\n`) return Body or Response.Body end
+	if Body and Body["error"] and Body["error"]["name"] == "ZodError" then RongoWarn(`Request returned an error with the following details:`,Body["error"]) return Body or Response.Body end
 	if Response["Success"] == false then RongoWarn(`Request returned an error with the following details:\nError message: {Body}\nStatus code: {Response["StatusCode"]}\nStatus Message: {Response["StatusMessage"]}\n`) end
+		
 	return Body or Response.Body
 end
 
@@ -150,18 +155,46 @@ export type RongoCollection = typeof(RongoCollection)
 
 --// Functions
 
-function Rongo.new(Url: string,Key: string?) : RongoClient
+function Rongo.new(Url: string,Key: string | {Type: "emailpassword" | "key" | "bearer" | "uri",[string]: string}) : RongoClient
 	ValidateStringArguments({Url = Url},"Rongo.new()")
 	return setmetatable({
 		_settings = {
 			Url = Url,
-			Auth = {
+			Auth = (type(Key) == "table") and Key or {
 				Key = Key,
 				Type = "key",
 			},
 		},
 		_type = "RongoClient"
 	},RongoClient)
+end
+
+function Rongo.auth(Type: "emailpassword" | "key" | "bearer" | "uri", Value: string, Value2: string?)
+	local AuthDict = {}
+	if Type == "emailpassword" then
+		AuthDict = {
+			Type = "emailpassword",
+			Email = Value,
+			Password = Value2
+		}
+	elseif Type == "key" then
+		AuthDict = {
+			Type = "key",
+			Key = Value,
+		}
+	elseif Type == "bearer" then
+		AuthDict = {
+			Type = "bearer",
+			Token = Value,
+		}
+	elseif Type == "uri" then
+		AuthDict = {
+			Type = "uri",
+			Uri = Value,
+		}
+	end
+	
+	return AuthDict
 end
 
 --// Rongo Client
@@ -191,6 +224,15 @@ function RongoClient:SetBearerAuth(Token: string)
 	self._settings.Auth = {
 		Type = "bearer",
 		Token = Token	
+	}
+end
+
+function RongoClient:SetConnectionUri(ConnectionUri: string)
+	if not self then return RongoWarn("Attempted to call 'RongoClient:SetConnectionUri()' without initializing a new client; you can do this with 'Rongo.new()'") end
+	ValidateStringArguments({ConnectionUri = ConnectionUri},"RongoClient:SetConnectionUri()")
+	self._settings.Auth = {
+		Type = "uri",
+		Uri = ConnectionUri
 	}
 end
 
